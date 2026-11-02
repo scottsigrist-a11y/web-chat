@@ -63,9 +63,10 @@
   // not a setting: the app intentionally offers no model switcher.
   // NOTE (verify at deploy time): confirm this ID exists in the installed
   // @mlc-ai/web-llm version's prebuilt model list, and pin the package version.
-  const MODEL_ID = "Qwen2.5-1.5B-Instruct-q4f32_1-MLC";
-  // q4f32_1 is the broad-compatibility build: it does not require the
-  // shader-f16 WebGPU feature, so it runs on more devices.
+  const MODEL_ID = "Qwen2.5-0.5B-Instruct-q4f16_1-MLC";
+  // q4f16_1 is the smaller build: it needs the shader-f16 WebGPU feature,
+  // which Apple GPUs support, and it keeps the download near 400 MB so
+  // iPhones (1.5 GB Safari page cap) can actually load it.
 
   import { CreateMLCEngine } from "https://esm.run/@mlc-ai/web-llm";
 
@@ -106,7 +107,7 @@
       );
       return;
     }
-    setStatus("Downloading the model (about 1 GB, first visit only — it is cached after that)…");
+    setStatus("Downloading the model (about 400 MB, first visit only — it is cached after that)…");
     try {
       engine = await CreateMLCEngine(MODEL_ID, {
         initProgressCallback: (report) => {
