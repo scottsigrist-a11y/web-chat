@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Debate</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0 auto;
+    max-width: 1100px;
+    padding: 16px;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.5;
+  }
+  h1 { font-size: 1.25rem; margin: 0 0 4px; }
+  a { color: inherit; }
+  #status {
+    font-size: 0.9rem;
+    color: #666;
+    min-height: 1.5em;
+    margin-bottom: 12px;
+    white-space: pre-wrap;
+  }
+  fieldset { border: 1px solid #ccc; border-radius: 8px; margin: 0 0 12px; padding: 12px; }
+  legend { font-weight: 600; padding: 0 6px; }
+  label { display: block; font-size: 0.9rem; margin: 8px 0 2px; }
+  input[type="text"], input[type="number"], textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px;
+    font-size: 1rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-family: inherit;
+  }
+  textarea { min-height: 64px; resize: vertical; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 719px) { .row { grid-template-columns: 1fr; } }
+  .numrow { display: flex; gap: 16px; flex-wrap: wrap; }
+  .numrow label { display: inline-block; }
+  .numrow input[type="number"] { width: 80px; }
+  .note { font-size: 0.85rem; color: #666; margin: 8px 0 0; }
+  .controls { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
+  button {
+    padding: 10px 18px;
+    font-size: 1rem;
+    border: 0;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  button:disabled { cursor: default; opacity: 0.5; }
+  #transcript {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    align-items: start;
+  }
+  @media (max-width: 719px) { #transcript { grid-template-columns: 1fr; } }
+  .msg {
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    padding: 12px;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+  }
+  .msg.d1 { grid-column: 1; border-left: 4px solid #4a90d9; }
+  .msg.d2 { grid-column: 2; border-left: 4px solid #d97b4a; }
+  .msg.judge { grid-column: 1 / -1; border-left: 4px solid #c0a062; }
+  @media (max-width: 719px) {
+    .msg.d1, .msg.d2, .msg.judge { grid-column: 1; }
+  }
+  .msg .head { font-weight: 600; margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<h1>Debate</h1>
+<p><a href="./index.html">&larr; Back to Web Chat</a></p>
+<div id="status">Starting…</div>
+
+<fieldset id="setup">
+  <legend>Set up the debate</legend>
+  <label for="topic">Debate topic</label>
+  <input id="topic" type="text" placeholder="e.g. Should pineapple belong on pizza?" autocomplete="off" />
+  <div class="row">
+    <div>
+      <label for="name1">Debater 1 name</label>
+      <input id="name1" type="text" value="Debater 1" autocomplete="off" />
+      <label for="traits1">Debater 1 traits</label>
+      <textarea id="traits1" placeholder="e.g. Witty, plain-spoken, loves data and examples"></textarea>
+      <label for="stance1">Debater 1 stance</label>
+      <input id="stance1" type="text" value="For" autocomplete="off" />
+    </div>
+    <div>
+      <label for="name2">Debater 2 name</label>
+      <input id="name2" type="text" value="Debater 2" autocomplete="off" />
+      <label for="traits2">Debater 2 traits</label>
+      <textarea id="traits2" placeholder="e.g. Formal, philosophical, quotes history"></textarea>
+      <label for="stance2">Debater 2 stance</label>
+      <input id="stance2" type="text" value="Against" autocomplete="off" />
+    </div>
+  </div>
+  <div class="numrow">
+    <span>
+      <label for="presRounds">Presentation rounds</label>
+      <input id="presRounds" type="number" min="0" max="10" value="2" />
+    </span>
+    <span>
+      <label for="questRounds">Question rounds</label>
+      <input id="questRounds" type="number" min="0" max="10" value="1" />
+    </span>
+  </div>
+  <p class="note">
+    One model (Llama-3.2-1B, on your device) plays both debaters, switching
+    sides each turn. Openings and presentation replies aim for about 1000
+    words each; in a question round, one side asks 5 questions and the other
+    answers all five in about 1000 words total, then they swap. Word counts
+    are targets, not exact — small models cannot count words precisely.
+    Each long reply takes minutes on a phone; the debate runs itself once
+    started, and Stop halts it between replies.
+  </p>
+</fieldset>
+
+<div class="controls">
+  <button id="run" disabled>Run debate</button>
+  <button id="stop" disabled>Stop</button>
+  <button id="reset" disabled>New debate</button>
+</div>
+
+<div id="transcript" aria-live="polite"></div>
+
+<script type="module">
+  // Debate model: Llama-3.2-1B-Instruct-q4f16_1-MLC, verified in WebLLM's own
+  // prebuilt model list (src/config.ts). One engine plays both debaters:
+  // two live engines would not fit an iPhone's memory cap.
+  const MODEL_ID = "Llama-3.2-1B-Instruct-q4f16_1-MLC";
+  // NOTE (verify at deploy time): confirm this ID exists in the installed
+  // @mlc-ai/web-llm version's prebuilt model list, and pin the package version.
+
+  import { CreateMLCEngine } from "https://esm.run/@mlc-ai/web-llm";
+
+  const statusEl = document.getElementById("status");
+  const setupEl = document.getElementById("setup");
+  const runEl = document.getElementById("run");
+  const stopEl = document.getElementById("stop");
+  const resetEl = document.getElementById("reset");
+  const transcriptEl = document.getElementById("transcript");
+
+  let engine = null;
+  let running = false;
+  let stopRequested = false;
+  let transcript = []; // { speaker: "d1" | "d2" | "judge", label, text }
+
+  function setStatus(text) { statusEl.textContent = text; }
+
+  function nearBottom() {
+    return window.innerHeight + window.scrollY > document.body.scrollHeight - 400;
+  }
+
+  function addCard(speaker, head) {
+    const div = document.createElement("div");
+    div.className = "msg " + speaker;
+    const headEl = document.createElement("div");
+    headEl.className = "head";
+    headEl.textContent = head;
+    const bodyEl = document.createElement("div");
+    div.appendChild(headEl);
+    div.appendChild(bodyEl);
+    transcriptEl.appendChild(div);
+    return bodyEl;
+  }
+
+  // Short running recap, built from the transcript itself (no extra model
+  // calls): one line per earlier turn. Keeps each turn's prompt inside the
+  // model's 4096-token window no matter how long the debate gets.
+  function buildRecap() {
+    const lines = transcript.map((t) => {
+      const who = t.speaker === "judge" ? "Judgment" : t.label;
+      return who + ": " + t.text.slice(0, 140).replace(/\s+/g, " ");
+    });
+    let recap = lines.join("\n");
+    if (recap.length > 1500) recap = recap.slice(-1500);
+    return recap;
+  }
+
+  function latestFrom(speaker) {
+    for (let i = transcript.length - 1; i >= 0; i--) {
+      if (transcript[i].speaker === speaker) return transcript[i].text.slice(0, 2500);
+    }
+    return "";
+  }
+
+  async function generate(system, user, maxTokens, onToken) {
+    let out = "";
+    const chunks = await engine.chat.completions.create({
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      stream: true,
+      temperature: 0.8,
+      max_tokens: maxTokens,
+    });
+    for await (const chunk of chunks) {
+      if (stopRequested) break;
+      const delta = chunk.choices && chunk.choices[0] && chunk.choices[0].delta;
+      const piece = delta && delta.content ? delta.content : "";
+      if (piece) {
+        out += piece;
+        onToken(out);
+      }
+    }
+    return out;
+  }
+
+  function persona(d, opponent) {
+    return "You are " + d.name + ". Traits: " + (d.traits || "(none given)") +
+      ". Your stance on the topic '" + d.topic + "' is: " + d.stance +
+      ". You are debating " + opponent.name + ". Stay in character as " +
+      d.name + " throughout. Argue only your own side; never concede your stance.";
+  }
+
+  async function runDebate() {
+    const topic = document.getElementById("topic").value.trim();
+    if (!topic) { setStatus("Enter a debate topic first."); return; }
+    const d1 = {
+      name: document.getElementById("name1").value.trim() || "Debater 1",
+      traits: document.getElementById("traits1").value.trim(),
+      stance: document.getElementById("stance1").value.trim() || "For",
+      topic,
+    };
+    const d2 = {
+      name: document.getElementById("name2").value.trim() || "Debater 2",
+      traits: document.getElementById("traits2").value.trim(),
+      stance: document.getElementById("stance2").value.trim() || "Against",
+      topic,
+    };
+    const presRounds = Math.min(10, Math.max(0, parseInt(document.getElementById("presRounds").value, 10) || 0));
+    const questRounds = Math.min(10, Math.max(0, parseInt(document.getElementById("questRounds").value, 10) || 0));
+
+    // Build the step list: openings, presentation rounds (alternating),
+    // question rounds (ask, answer, swap ask, swap answer), judgment.
+    const steps = [];
+    steps.push({ speaker: "d1", label: "Opening", kind: "opening" });
+    steps.push({ speaker: "d2", label: "Opening", kind: "opening" });
+    for (let r = 1; r <= presRounds; r++) {
+      steps.push({ speaker: "d1", label: "Presentation round " + r, kind: "rebuttal" });
+      steps.push({ speaker: "d2", label: "Presentation round " + r, kind: "rebuttal" });
+    }
+    for (let q = 1; q <= questRounds; q++) {
+      steps.push({ speaker: "d1", label: "Question round " + q + " — Questions", kind: "questions" });
+      steps.push({ speaker: "d2", label: "Question round " + q + " — Answers", kind: "answers" });
+      steps.push({ speaker: "d2", label: "Question round " + q + " — Questions", kind: "questions" });
+      steps.push({ speaker: "d1", label: "Question round " + q + " — Answers", kind: "answers" });
+    }
+    steps.push({ speaker: "judge", label: "Judgment", kind: "judgment" });
+
+    running = true;
+    stopRequested = false;
+    setupEl.disabled = true;
+    runEl.disabled = true;
+    stopEl.disabled = false;
+    resetEl.disabled = true;
+    transcript = [];
+    transcriptEl.innerHTML = "";
+
+    const byKey = { d1, d2 };
+    let lastQuestions = "";
+
+    for (let i = 0; i < steps.length; i++) {
+      if (stopRequested) break;
+      const step = steps[i];
+      setStatus("Step " + (i + 1) + " of " + steps.length + " — " +
+        (step.speaker === "judge" ? "Judgment" : byKey[step.speaker].name + " (" + step.label + ")") +
+        " is speaking…");
+      const head = step.speaker === "judge"
+        ? "Judgment"
+        : byKey[step.speaker].name + " — " + step.label;
+      const bodyEl = addCard(step.speaker, head);
+      let system = "";
+      let user = "";
+      let maxTokens = 1800;
+      if (step.kind === "judgment") {
+        system = "You are an impartial debate judge. You did not take part in the debate.";
+        user = "Debate recap:\n" + buildRecap() +
+          "\n\nSummarize the debate in about 500 words, name the winner, and explain why, " +
+          "point by point. Be specific about which arguments held up and which did not.";
+        maxTokens = 900;
+      } else {
+        const me = byKey[step.speaker];
+        const opp = byKey[step.speaker === "d1" ? "d2" : "d1"];
+        system = persona(me, opp);
+        if (step.kind === "opening") {
+          user = "Write your opening statement of about 1000 words supporting your stance on the topic. " +
+            "Develop several distinct arguments with examples. Do not mention these instructions.";
+        } else if (step.kind === "rebuttal") {
+          user = "Your opponent's most recent argument:\n" + latestFrom(step.speaker === "d1" ? "d2" : "d1") +
+            "\n\nDebate so far (brief recap):\n" + buildRecap() +
+            "\n\nWrite a response of about 1000 words that answers their points directly and advances your own case. " +
+            "Do not concede your stance.";
+        } else if (step.kind === "questions") {
+          user = "Debate so far (brief recap):\n" + buildRecap() +
+            "\n\nIt is your turn to question your opponent. Ask them 5 sharp, specific questions that challenge " +
+            "their position on the topic. Number the questions 1 to 5. Keep each question short — this message " +
+            "should be questions only, no answers.";
+          maxTokens = 600;
+        } else if (step.kind === "answers") {
+          user = "Your opponent asked you these 5 questions:\n" + lastQuestions +
+            "\n\nAnswer all five questions in about 1000 words total. Be direct and answer every question; do not dodge.";
+        }
+      }
+      try {
+        const text = await generate(system, user, maxTokens, (partial) => {
+          bodyEl.textContent = partial;
+          if (nearBottom()) bodyEl.scrollIntoView({ block: "end" });
+        });
+        if (step.kind === "questions") lastQuestions = text;
+        transcript.push({ speaker: step.speaker, label: step.label, text });
+        if (!text.trim()) bodyEl.textContent = "(No reply generated.)";
+      } catch (err) {
+        bodyEl.textContent = "Sorry — something went wrong generating this reply: " +
+          (err && err.message ? err.message : err);
+        transcript.push({ speaker: step.speaker, label: step.label, text: "" });
+        break;
+      }
+    }
+
+    running = false;
+    stopEl.disabled = true;
+    resetEl.disabled = false;
+    setStatus(stopRequested
+      ? "Stopped. The debate so far is above; press New debate to start over."
+      : "Debate complete — the judgment is the last card.");
+  }
+
+  runEl.addEventListener("click", () => {
+    if (!engine || running) return;
+    runDebate();
+  });
+
+  stopEl.addEventListener("click", () => {
+    stopRequested = true;
+    try {
+      if (engine && engine.interruptGenerate) engine.interruptGenerate();
+    } catch (e) { /* stopping between replies still works */ }
+    setStatus("Stopping… (finishes the current reply at most, then halts)");
+  });
+
+  resetEl.addEventListener("click", () => {
+    transcript = [];
+    transcriptEl.innerHTML = "";
+    setupEl.disabled = false;
+    runEl.disabled = !engine;
+    resetEl.disabled = true;
+    setStatus(engine ? "Ready for a new debate." : "Starting…");
+  });
+
+  async function init() {
+    if (!navigator.gpu) {
+      setStatus(
+        "This browser cannot run the model: WebGPU is not available.\n" +
+        "Try a recent Chrome or Edge (113+), or Safari 26+."
+      );
+      return;
+    }
+    setStatus("Downloading the model (about 700 MB, first visit only — it is cached after that)…");
+    try {
+      engine = await CreateMLCEngine(MODEL_ID, {
+        initProgressCallback: (report) => {
+          setStatus(report.text || "Loading the model…");
+        },
+      });
+      setStatus("Ready. Everything runs on your device — nothing you type leaves this browser.");
+      runEl.disabled = false;
+    } catch (err) {
+      setStatus(
+        "Could not load the model: " + (err && err.message ? err.message : err) +
+        "\nIf this device is low on memory, try a desktop browser and reload."
+      );
+    }
+  }
+
+  init();
+</script>
+</body>
+</html>
